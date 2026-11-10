@@ -1,0 +1,116 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Net-Zero Town</title>
+<style>
+:root{--bg:#f3efe2;--ink:#2b2a26;--card:#fffaf0;--g:#3d8b5a;--r:#c4513b;--y:#e0a530;--b:#3b6ea8}
+*{box-sizing:border-box}body{margin:0;font-family:Georgia,serif;background:var(--bg);color:var(--ink)}
+header{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;background:var(--ink);color:var(--bg)}
+h1{margin:0;font-size:22px;letter-spacing:1px}button{font-family:inherit;cursor:pointer;border:2px solid var(--ink);background:var(--card);border-radius:8px;padding:6px 10px}
+button:hover:not(:disabled){background:#f6e3b4}button:disabled{opacity:.4;cursor:default}
+.next{background:var(--g);color:#fff;font-weight:bold;font-size:16px;padding:8px 16px;border-color:var(--g)}
+main{display:grid;grid-template-columns:1fr 340px;gap:12px;padding:12px}@media(max-width:820px){main{grid-template-columns:1fr}}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-bottom:10px}
+.stat{background:var(--card);border:2px solid var(--ink);border-radius:10px;padding:6px 8px}.stat b{display:block;font-size:20px}.stat small{opacity:.7}
+.bar{height:6px;background:#ddd;border-radius:3px;margin-top:4px;overflow:hidden}.bar i{display:block;height:100%}
+#town{display:grid;grid-template-columns:repeat(10,1fr);gap:3px;background:#8fbf7a;padding:8px;border-radius:12px;border:2px solid var(--ink);transition:background 1s}
+.t{aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:clamp(14px,3vw,28px);border-radius:5px;background:rgba(255,255,255,.18);cursor:pointer;position:relative}
+.t:hover{outline:2px solid var(--ink)}.t.sel{outline:3px solid var(--y)}
+.smog{position:absolute;inset:0;background:rgba(90,80,70,.35);border-radius:5px;pointer-events:none}
+.panel{background:var(--card);border:2px solid var(--ink);border-radius:12px;padding:10px;margin-bottom:10px}
+.panel h3{margin:0 0 6px;font-size:16px}.opt{display:flex;justify-content:space-between;gap:6px;align-items:center;padding:5px 0;border-bottom:1px dashed #ccc;font-size:13px}
+.opt div{flex:1}.opt em{display:block;font-size:11px;opacity:.7;font-style:normal}
+.tabs button{font-size:12px;padding:4px 7px;margin:2px}.tabs .on{background:var(--ink);color:var(--bg)}
+#log{max-height:200px;overflow:auto;font-size:13px}#log p{margin:4px 0}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:9}
+.modal .box{background:var(--card);border:3px solid var(--ink);border-radius:14px;padding:20px;max-width:440px}
+canvas{width:100%;height:90px;background:var(--card);border:2px solid var(--ink);border-radius:10px;margin-top:10px}
+</style></head><body>
+<header><h1>🌱 NET-ZERO TOWN</h1><div><span id="yr"></span> <button class="next" id="next">Next Year ▶</button></div></header>
+<main><section><div class="stats" id="stats"></div><div id="town"></div><canvas id="chart" width="600" height="90"></canvas></section>
+<aside><div class="panel"><h3 id="selT">Pick a tile to build</h3><div id="build"></div></div>
+<div class="panel"><h3>Town Policies</h3><div class="tabs" id="tabs"></div><div id="pol"></div></div>
+<div class="panel"><h3>Town News</h3><div id="log"></div></div></aside></main>
+<div class="modal" id="modal" style="display:none"><div class="box" id="mbox"></div></div>
+<script>
+const B={ // buildings: icon,cost,upkeep,co2/yr,jobs,happy,pop,power(+gen/-use)
+ empty:{i:'',n:'Empty lot'},tree:{i:'🌳',n:'Park / Forest',c:3,u:0,co2:-1.5,j:0,h:2,p:0,e:0,tip:'Trees absorb CO₂ and cheer people up.'},
+ house:{i:'🏠',n:'Houses',c:6,u:0,co2:2,j:0,h:0,p:400,e:-1,tip:'More residents = more taxes, but more energy demand.'},
+ apt:{i:'🏢',n:'Dense Apartments',c:10,u:0,co2:2.5,j:0,h:-1,p:1000,e:-1.5,tip:'Density is efficient: more people per tonne of CO₂.'},
+ factory:{i:'🏭',n:'Factory',c:12,u:0,co2:8,j:500,h:-2,p:0,e:-2,tip:'Jobs and taxes, but a big emitter.'},
+ shop:{i:'🏪',n:'Shops',c:7,u:0,co2:1,j:200,h:1,p:0,e:-.5,tip:'Local jobs, short trips.'},
+ coal:{i:'⚫',n:'Coal Plant',c:8,u:1,co2:20,j:150,h:-3,p:0,e:6,tip:'Cheap power, massive emissions.'},
+ gas:{i:'🔥',n:'Gas Plant',c:10,u:1.5,co2:9,j:80,h:-1,p:0,e:5,tip:'Half of coal\'s CO₂ — a bridge, not a destination.'},
+ solar:{i:'☀️',n:'Solar Farm',c:14,u:.3,co2:0,j:30,h:0,p:0,e:2.5,tip:'Zero emissions, but output varies — pair with storage.'},
+ wind:{i:'🌀',n:'Wind Turbines',c:16,u:.4,co2:0,j:30,h:-.5,p:0,e:3.5,tip:'Strong output; some neighbours dislike the view.'},
+ battery:{i:'🔋',n:'Battery Storage',c:12,u:.3,co2:0,j:10,h:0,p:0,e:0,tip:'Makes solar & wind reliable (+50% renewable output).'},
+ transit:{i:'🚋',n:'Tram Station',c:12,u:1,co2:-3,j:60,h:2,p:0,e:-.5,tip:'Gets people out of cars.'},
+ recycle:{i:'♻️',n:'Recycling & Compost',c:8,u:.5,co2:-2,j:60,h:1,p:0,e:-.3,tip:'Landfill methane is a sneaky greenhouse gas.'},
+ landfill:{i:'🗑️',n:'Landfill',c:2,u:0,co2:4,j:20,h:-2,p:0,e:0,tip:'Cheap now, methane forever.'}
+};
+const P={ // policies: tab, name, cost once, upkeep, effects
+ Transport:[['bike','Bike lanes',5,0,'Cheap; cuts car trips a little, people like it.',{co2:-.05,h:3}],['ev','EV subsidies',8,2,'Cars go electric — shifts load to the grid.',{co2:-.12,e:-3}],['cong','Congestion charge',2,-3,'Raises money, cuts traffic, angers drivers.',{co2:-.07,h:-6,econ:-3}]],
+ Buildings:[['insul','Insulation grants',10,1,'Homes use less heat. Pays back over time.',{co2:-.08,h:2,e:1}],['heat','Heat-pump mandate',6,0,'Gas boilers out; electricity demand up.',{co2:-.12,h:-3,e:-3}],['code','Green building code',2,0,'New buildings efficient; developers grumble.',{co2:-.05,econ:-4}]],
+ Economy:[['ctax','Carbon tax',3,-5,'Revenue + every emitter cuts back. Unpopular at first.',{co2:-.1,h:-5,econ:-5}],['greenjobs','Green jobs program',10,2,'Train workers for clean industries.',{econ:6,h:3}],['local','Buy-local campaign',3,0,'Fewer freight miles.',{co2:-.03,econ:2}]],
+ Waste:[['plastic','Plastic bag ban',1,0,'Small, visible, mildly annoying.',{co2:-.02,h:-1}],['zero','Zero-waste plan',6,1,'Repair cafes & refill shops.',{co2:-.05,h:2}]],
+ Land:[['sprawl','Ban sprawl (infill only)',2,0,'Protects green space; housing pricier.',{co2:-.04,h:-2,econ:-2}],['urbanfarm','Community gardens',3,0,'Food nearby, neighbours meet.',{co2:-.02,h:4}]]
+};
+const EV=[
+ ['🌡️ Heatwave!','Air-con demand spikes. Trees and parks keep people cool.',s=>{s.happy-=Math.max(0,8-count('tree'));}],
+ ['🌊 Flood!','A storm floods low streets. Forests soak up water.',s=>{const d=Math.max(2,12-count('tree')*1.5);s.money-=d;return'Repairs cost $'+d.toFixed(0)+'M.'}],
+ ['⛽ Gas price spike','Fossil fuel costs jump.',s=>{const d=count('gas')*3+count('coal')*2;s.money-=d;return d?'Your fossil plants cost $'+d+'M extra.':'You\'re insulated — no fossil plants!'}],
+ ['💸 Federal green grant','The state rewards towns cutting emissions.',s=>{const g=s.co2<s.co2start*.7?15:4;s.money+=g;return'You receive $'+g+'M.'}],
+ ['🏗️ Tech company wants to move in','They\'ll bring jobs — if your power is clean.',s=>{if(cleanShare()>.6){s.econ+=10;return'They love your clean grid! Economy +10.'}return'Your grid is too dirty; they go elsewhere.'}],
+ ['📉 Recession','Tax revenue dips.',s=>{s.money-=8;s.econ-=5}],
+ ['☀️ Solar prices drop','Solar farms are 40% cheaper this year!',s=>{s.solarSale=1}],
+ ['🗳️ Election year','Voters judge your record.',s=>{if(s.happy<35){s.over='You were voted out. Happiness was too low.';}else return'You are re-elected! ('+s.happy.toFixed(0)+'% approval)'}]
+];
+let S,grid,sel=null,tab='Transport';
+function count(k){return grid.filter(t=>t==k).length}
+function cleanShare(){let c=0,t=0;grid.forEach(k=>{const b=B[k];if(b.e>0){t+=b.e;if(b.co2==0)c+=b.e}});return t?c/t:1}
+function init(){grid=Array(100).fill('empty');const seed={coal:[44],factory:[33,34],house:[22,23,24,32,42,52,53],shop:[43],landfill:[88],tree:[0,1,9,90,99]};
+ for(const k in seed)seed[k].forEach(i=>grid[i]=k);
+ S={year:2026,money:30,happy:60,econ:50,pol:{},hist:[],co2start:0,solarSale:0};S.co2start=calc().co2;render();
+ modal(`<h2>Welcome, Planner!</h2><p>Your town runs on coal and cars. By <b>2050</b> you must reach <b>net-zero emissions</b> (≈ 0 tonnes) — without going broke or losing the next election.</p><p>🖱️ Click tiles to build or demolish. 📜 Enact policies. ▶ Advance the year and see what happens.</p><p>Every choice has a trade-off. Good luck!</p><button class="next" onclick="closeM()">Let's go</button>`)}
+function calc(){let co2=0,jobs=0,h=0,pop=0,e=0,up=0,ren=0,bat=count('battery');
+ grid.forEach(k=>{const b=B[k];if(!b.c)return;co2+=b.co2;jobs+=b.j;h+=b.h;pop+=b.p;up+=b.u;if(b.e>0&&b.co2==0)ren+=b.e;else e+=b.e});
+ e+=ren*Math.min(1,.6+bat*.2);let m=1,ph=0,pe=0,pu=0;
+ for(const id in S?.pol||{}){const p=findP(id);m+=p[5].co2||0;ph+=p[5].h||0;pe+=p[5].e||0;pu+=p[3]}
+ e+=pe;let short=e<0?-e:0; co2=co2*Math.max(.1,m)+short*4; // imported dirty power if short
+ return{co2,jobs,h:h+ph,pop,e,up:up+pu,short,ren}}
+function findP(id){for(const t in P)for(const p of P[t])if(p[0]==id)return p}
+function stat(l,v,sub,pct,col){return`<div class="stat"><small>${l}</small><b>${v}</b><small>${sub}</small>${pct!=null?`<div class="bar"><i style="width:${Math.max(0,Math.min(100,pct))}%;background:${col}"></i></div>`:''}</div>`}
+function render(){const c=calc();document.getElementById('yr').textContent=S.year+' · '+(2050-S.year)+' yrs left';
+ const cp=c.co2/S.co2start*100;
+ document.getElementById('stats').innerHTML=stat('💰 Budget','$'+S.money.toFixed(0)+'M','income ~$'+income(c).toFixed(1)+'M/yr',null)+stat('☁️ Emissions',Math.max(0,c.co2).toFixed(0)+' kt',cp.toFixed(0)+'% of 2026',cp,cp>50?'var(--r)':cp>20?'var(--y)':'var(--g)')+stat('👥 Population',(1000+c.pop).toLocaleString(),c.jobs+' jobs',null)+stat('😊 Happiness',S.happy.toFixed(0)+'%','approval',S.happy,'var(--b)')+stat('📈 Economy',S.econ.toFixed(0),'business health',S.econ,'var(--y)')+stat('⚡ Power',(c.e>=0?'+':'')+c.e.toFixed(1),c.short?'importing dirty power!':(cleanShare()*100).toFixed(0)+'% clean',null);
+ const tw=document.getElementById('town');tw.style.background=`hsl(${100-Math.min(60,cp*.6)},${30+ (100-Math.min(100,cp))*.3}%,55%)`;
+ tw.innerHTML=grid.map((k,i)=>`<div class="t${sel===i?' sel':''}" title="${B[k].n}" onclick="pick(${i})">${B[k].i}${B[k].co2>3?'<span class="smog"></span>':''}</div>`).join('');
+ const bd=document.getElementById('build');
+ if(sel==null){bd.innerHTML='<em>Click any tile on the map.</em>'}else{const cur=grid[sel];document.getElementById('selT').textContent='Tile: '+B[cur].n;
+  bd.innerHTML=(cur!='empty'?`<div class="opt"><div>${B[cur].tip||''}<em>Demolish costs $2M</em></div><button onclick="place('empty')">Demolish</button></div>`:Object.keys(B).filter(k=>k!='empty').map(k=>{const b=B[k],cost=k=='solar'&&S.solarSale?b.c*.6:b.c;return`<div class="opt"><div>${b.i} ${b.n} <em>${b.tip} · CO₂ ${b.co2>0?'+':''}${b.co2} ${b.e?'· ⚡'+(b.e>0?'+':'')+b.e:''}</em></div><button ${S.money<cost?'disabled':''} onclick="place('${k}')">$${cost.toFixed(0)}M</button></div>`}).join(''))}
+ document.getElementById('tabs').innerHTML=Object.keys(P).map(t=>`<button class="${t==tab?'on':''}" onclick="tab='${t}';render()">${t}</button>`).join('');
+ document.getElementById('pol').innerHTML=P[tab].map(p=>{const on=S.pol[p[0]];return`<div class="opt"><div>${p[1]}<em>${p[4]} ${p[3]?'· upkeep '+(p[3]>0?'$'+p[3]+'M':'+$'+(-p[3])+'M revenue'):''}</em></div><button ${!on&&S.money<p[2]?'disabled':''} onclick="togP('${p[0]}')">${on?'Repeal':'$'+p[2]+'M'}</button></div>`}).join('');
+ drawChart()}
+function income(c){return(1000+c.pop)/200*(.6+S.econ/100)+c.jobs/150-c.up}
+function pick(i){sel=i;render()}
+function place(k){const b=B[k];let cost=k=='empty'?2:(k=='solar'&&S.solarSale?b.c*.6:b.c);if(S.money<cost)return;S.money-=cost;
+ const old=B[grid[sel]];if(k=='empty'&&old.j>300)S.econ-=4,log('🏭 Closing the '+old.n+' cost jobs. Economy dips.');grid[sel]=k;render()}
+function togP(id){const p=findP(id);if(S.pol[id]){delete S.pol[id];S.happy+=(p[5].h||0)<0?2:-2}else{S.money-=p[2];S.pol[id]=1;S.happy+=(p[5].h||0)*.5;S.econ+=p[5].econ||0;log('📜 Enacted: '+p[1]+'.')}render()}
+function log(t){const l=document.getElementById('log');l.insertAdjacentHTML('afterbegin','<p>'+t+'</p>')}
+function next(){const c=calc();S.money+=income(c);
+ S.happy+=(c.h*.3-S.happy*.05+3)*.5+(c.short?-3:0)+(c.co2<S.co2start*.5?1:0);
+ S.econ+=(c.jobs/(1000+c.pop)*100-30)*.1+(S.money<0?-4:0);
+ S.happy=Math.max(0,Math.min(100,S.happy));S.econ=Math.max(0,Math.min(100,S.econ));
+ S.hist.push(Math.max(0,c.co2));S.year++;S.solarSale=0;
+ if(c.short)log('⚡ Power shortfall! Importing coal power from next door — emissions up.');
+ if(S.econ<30)log('📉 Not enough jobs: young people are leaving.');
+ if(Math.random()<.45||S.year%4==0){const e=S.year%4==0?EV[7]:EV[Math.floor(Math.random()*7)];const r=e[2](S);log('<b>'+e[0]+'</b> '+e[1]+' '+(r||''));if(!S.over)modal(`<h2>${e[0]}</h2><p>${e[1]}</p><p><b>${r||''}</b></p><button class="next" onclick="closeM()">OK</button>`)}
+ if(S.money<-20)S.over='The town went bankrupt. The state took over.';
+ if(S.over)return end(false,S.over);
+ if(S.year>=2050){const f=calc().co2;return f<=S.co2start*.05?end(true,'You hit net zero by 2050!'):end(false,'2050 arrived with '+f.toFixed(0)+' kt still emitted ('+(f/S.co2start*100).toFixed(0)+'% of 2026).')}
+ render()}
+function end(win,msg){render();const c=calc();modal(`<h2>${win?'🏆 Victory!':'🏚️ Game Over'}</h2><p>${msg}</p><p>Final: $${S.money.toFixed(0)}M · ${S.happy.toFixed(0)}% happy · economy ${S.econ.toFixed(0)} · ${(1000+c.pop).toLocaleString()} residents</p><p><em>${win?(S.happy>65&&S.econ>60?'A thriving, clean town — the gold standard.':'Clean, though residents felt the squeeze.'):'Tip: replace coal first (biggest emitter), add batteries for renewables, and plant trees to soak up the rest.'}</em></p><button class="next" onclick="closeM();init()">Play again</button>`)}
+function drawChart(){const cv=document.getElementById('chart'),x=cv.getContext('2d');x.clearRect(0,0,600,90);x.fillStyle='#2b2a26';x.font='11px Georgia';x.fillText('Emissions 2026 → 2050',6,12);
+ x.strokeStyle='#3d8b5a';x.setLineDash([4,4]);x.beginPath();x.moveTo(0,85);x.lineTo(600,85);x.stroke();x.setLineDash([]);
+ x.strokeStyle='#c4513b';x.lineWidth=2;x.beginPath();S.hist.forEach((v,i)=>{const px=i/24*600,py=85-v/S.co2start*70;i?x.lineTo(px,py):x.moveTo(px,py)});x.stroke()}
+function modal(h){document.getElementById('mbox').innerHTML=h;document.getElementById('modal').style.display='flex'}
+function closeM(){document.getElementById('modal').style.display='none'}
+document.getElementById('next').onclick=next;init();
+</script></body></html>
